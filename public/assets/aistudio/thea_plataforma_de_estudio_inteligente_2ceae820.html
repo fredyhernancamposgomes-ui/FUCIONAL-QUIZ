@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Thea - Plataforma de Estudio Inteligente</title>
+
+  <!-- Fuente Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- TailwindCSS CDN -->
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+
+  <!-- React & ReactDOM CDN -->
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+
+  <!-- Babel Standalone CDN -->
+  <script src="https://unpkg.com/@babel/standalone@7.26.9/babel.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      background-color: #1a1a1a;
+      color: #ffffff;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    /* Scrollbar oscuro */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #1a1a1a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2b2b36;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3a3a48;
+    }
+
+    /* Tarjetas de opción en Estudio Inteligente */
+    .option-card {
+      background-color: #2b2b36;
+      border: 1px solid #3a3a48;
+      border-radius: 12px;
+      transition: all 0.18s ease-in-out;
+    }
+    .option-card:hover:not(:disabled) {
+      background-color: #343442;
+      border-color: #525266;
+      transform: translateY(-1px);
+    }
+    .option-card.selected {
+      background-color: #32364a;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+    }
+    .option-card.correct {
+      background-color: rgba(22, 163, 74, 0.22);
+      border-color: #22c55e;
+      box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.45);
+    }
+    .option-card.incorrect {
+      background-color: rgba(220, 38, 38, 0.22);
+      border-color: #ef4444;
+      box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.45);
+    }
+
+    /* Efecto Flip 3D para Flashcards */
+    .perspective-1000 {
+      perspective: 1000px;
+    }
+    .flip-card-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+      transform-style: preserve-3d;
+    }
+    .flip-card-inner.is-flipped {
+      transform: rotateY(180deg);
+    }
+    .flip-card-front,
+    .flip-card-back {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      border-radius: 16px;
+    }
+    .flip-card-back {
+      transform: rotateY(180deg);
+    }
+  </style>
+</head>
+<body class="bg-[#1a1a1a] text-white min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState } = React;
+
+    // Limpieza estricta de JSON devuelto por Gemini
+    function limpiarYParsearJSON(textoCrudo) {
+      let textoLimpio = (textoCrudo || "")
+        .replace(/```json/gi, "")
+        .replace(/```/g, "")
+        .trim();
+
+      try {
+        return JSON.parse(textoLimpio);
+      } catch (err) {
+        const inicioObj = textoLimpio.indexOf("{");
+        const finObj = textoLimpio.lastIndexOf("}");
+        const inicioArr = textoLimpio.indexOf("[");
+        const finArr = textoLimpio.lastIndexOf("]");
+
+        if (inicioObj !== -1 && finObj !== -1 && (inicioArr === -1 || inicioObj < inicioArr)) {
+          return JSON.parse(textoLimpio.slice(inicioObj, finObj + 1));
+        }
+        if (inicioArr !== -1 && finArr !== -1 && finArr > inicioArr) {
+          return JSON.parse(textoLimpio.slice(inicioArr, finArr + 1));
+        }
+        throw err;
+      }
+    }
+
+    function App() {
+      // Estado de Navegación Principal (Sidebar)
+      const [currentView, setCurrentView] = useState("materiales"); // 'materiales' | 'quiz' | 'flashcards' | 'guia'
+
+      // Configuración y Materiales
+      const [apiKey, setApiKey] = useState("");
+      const [mostrarKey, setMostrarKey] = useState(false);
+      const [apuntes, setApuntes] = useState("");
+      const [cargando, setCargando] = useState(false);
+      const [mensajeEstado, setMensajeEstado] = useState(null);
+
+      // Estado de "Estudio Inteligente" (Quiz)
+      const [preguntas, setPreguntas] = useState([]);
+      const [indice, setIndice] = useState(0);
+      const [respuestaSeleccionada, setRespuestaSeleccionada] = useState(null);
+      const [mostrarRespuesta, setMostrarRespuesta] = useState(false);
+      const [aciertos, setAciertos] = useState(0);
+      const [preguntasEvaluadas, setPreguntasEvaluadas] = useState({});
+      const [feedbackVoto, setFeedbackVoto] = useState({});
+      const [alertaQuiz, setAlertaQuiz] = useState("");
+
+      // Estado de "Tarjetas de Estudio" (Flashcards)
+      const [flashcards, setFlashcards] = useState([]);
+      const [indiceFlashcard, setIndiceFlashcard] = useState(0);
+      const [volteada, setVolteada] = useState(false);
+      const [conocidas, setConocidas] = useState({});
+
+      // Estado de "Guía de Estudio" (Resumen)
+      const [guiaTexto, setGuiaTexto] = useState("");
+      const [copiado, setCopiado] = useState(false);
+
+      // Función base para invocar gemini-3.8-flash con fetch() nativo
+      async function llamarGeminiAPI(promptFinal) {
+        const cleanKey = apiKey.trim();
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(cleanKey)}`;
+
+        const payload = {
+          contents: [
+            {
+              parts: [{ text: promptFinal }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.3
+          }
+        };
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          let detalleError = "";
+          try {
+            const errJson = await response.json();
+            detalleError = errJson?.error?.message || "";
+          } catch (_) {
+            detalleError = await response.text();
+          }
+          throw new Error(
+            `Error HTTP ${response.status}: ${detalleError || response.statusText}`
+          );
+        }
+
+        const data = await response.json();
+        const textoRespuesta = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!textoRespuesta || typeof textoRespuesta !== "string") {
+          throw new Error("La respuesta de Gemini no contiene texto válido.");
+        }
+        return textoRespuesta;
+      }
+
+      // Validación previa de credenciales y apuntes
+      function validarEntradas() {
+        setMensajeEstado(null);
+        if (!apiKey || !apiKey.trim()) {
+          setMensajeEstado({
+            tipo: "error",
+            texto: "⚠️ Por favor, ingresa tu GEMINI_API_KEY en el panel antes de generar contenido."
+          });
+          return false;
+        }
+        if (!apuntes || apuntes.trim().length < 20) {
+          setMensajeEstado({
+            tipo: "warning",
+            texto: "⚠️ Por favor, pega un material de estudio más detallado (mínimo 20 caracteres)."
+          });
+          return false;
+        }
+        return true;
+      }
+
+      // 1. Generar Quiz (Estudio Inteligente)
+      async function generarQuiz() {
+        if (!validarEntradas()) return;
+        setCargando(true);
+        setAlertaQuiz("");
+
+        const promptQuiz =
+          "Devuelve un JSON con 5 preguntas, opciones (4) y el índice de la respuesta correcta. " +
+          'Usa exactamente este esquema JSON sin bloques markdown: {"preguntas": [{"pregunta": "texto", "opciones": ["Opción 1", "Opción 2", "Opción 3", "Opción 4"], "correcta": 0, "explicacion": "Breve explicación de la respuesta correcta"}]}. ' +
+          `Material de estudio:\n${apuntes}`;
+
+        try {
+          const rawText = await llamarGeminiAPI(promptQuiz);
+          const parsed = limpiarYParsearJSON(rawText);
+          const lista = Array.isArray(parsed) ? parsed : parsed?.preguntas;
+
+          if (!Array.isArray(lista) || lista.length === 0) {
+            throw new Error("El JSON recibido no contiene una lista válida de preguntas.");
+          }
+
+          const preguntasNormalizadas = lista.map((item, idx) => {
+            const opcionesRaw = Array.isArray(item?.opciones) ? item.opciones : [];
+            if (opcionesRaw.length < 4) {
+              throw new Error(`La pregunta #${idx + 1} no incluye las 4 opciones requeridas.`);
+            }
+            let indiceCorrecta = parseInt(
+              item?.correcta !== undefined ? item.correcta : item?.indice_correcta,
+              10
+            );
+            if (isNaN(indiceCorrecta) || indiceCorrecta < 0 || indiceCorrecta > 3) {
+              indiceCorrecta = 0;
+            }
+            return {
+              pregunta: String(item?.pregunta || `Pregunta ${idx + 1}`).trim(),
+              opciones: opcionesRaw.slice(0, 4).map((o) => String(o)),
+              correcta: indiceCorrecta,
+              explicacion: String(
+                item?.explicacion || "Respuesta verificada según los apuntes proporcionados."
+              ).trim()
+            };
+          });
+
+          setPreguntas(preguntasNormalizadas);
+          setIndice(0);
+          setRespuestaSeleccionada(null);
+          setMostrarRespuesta(false);
+          setAciertos(0);
+          setPreguntasEvaluadas({});
+          setFeedbackVoto({});
+          setCurrentView("quiz");
+          setMensajeEstado({
+            tipo: "success",
+            texto: "✅ ¡Quiz de Estudio Inteligente generado con éxito!"
+          });
+        } catch (err) {
+          setMensajeEstado({
+            tipo: "error",
+            texto: `❌ No se pudo generar el Quiz: ${err.message}`
+          });
+        } finally {
+          setCargando(false);
+        }
+      }
+
+      // 2. Generar Tarjetas de Estudio (Flashcards)
+      async function generarFlashcards() {
+        if (!validarEntradas()) return;
+        setCargando(true);
+
+        const promptFlashcards =
+          "Devuelve un JSON con 5 pares de 'concepto' y 'definicion'. " +
+          'Usa exactamente este esquema JSON sin bloques markdown: {"flashcards": [{"concepto": "Término o concepto clave", "definicion": "Definición clara y concisa"}]}. ' +
+          `Material de estudio:\n${apuntes}`;
+
+        try {
+          const rawText = await llamarGeminiAPI(promptFlashcards);
+          const parsed = limpiarYParsearJSON(rawText);
+          const lista = Array.isArray(parsed)
+            ? parsed
+            : parsed?.flashcards || parsed?.tarjetas || parsed?.pares;
+
+          if (!Array.isArray(lista) || lista.length === 0) {
+            throw new Error("El JSON recibido no contiene una lista válida de pares concepto/definición.");
+          }
+
+          const tarjetasNormalizadas = lista.map((item, idx) => ({
+            concepto: String(item?.concepto || `Concepto ${idx + 1}`).trim(),
+            definicion: String(item?.definicion || "Sin definición disponible.").trim()
+          }));
+
+          setFlashcards(tarjetasNormalizadas);
+          setIndiceFlashcard(0);
+          setVolteada(false);
+          setConocidas({});
+          setCurrentView("flashcards");
+          setMensajeEstado({
+            tipo: "success",
+            texto: "✅ ¡Tarjetas de Estudio generadas con éxito!"
+          });
+        } catch (err) {
+          setMensajeEstado({
+            tipo: "error",
+            texto: `❌ No se pudieron generar las Tarjetas: ${err.message}`
+          });
+        } finally {
+          setCargando(false);
+        }
+      }
+
+      // 3. Generar Guía de Estudio (Resumen estructurado)
+      async function generarGuia() {
+        if (!validarEntradas()) return;
+        setCargando(true);
+
+        const promptGuia =
+          "Devuelve un texto estructurado con los puntos clave del material. " +
+          "Organízalo con títulos claros, subtítulos, viñetas, conceptos esenciales y un resumen final de repaso.\n\n" +
+          `Material de estudio:\n${apuntes}`;
+
+        try {
+          const rawText = await llamarGeminiAPI(promptGuia);
+          const textoLimpio = rawText
+            .replace(/```markdown/gi, "")
+            .replace(/```/g, "")
+            .trim();
+
+          setGuiaTexto(textoLimpio);
+          setCurrentView("guia");
+          setMensajeEstado({
+            tipo: "success",
+            texto: "✅ ¡Guía de Estudio generada con éxito!"
+          });
+        } catch (err) {
+          setMensajeEstado({
+            tipo: "error",
+            texto: `❌ No se pudo generar la Guía de Estudio: ${err.message}`
+          });
+        } finally {
+          setCargando(false);
+        }
+      }
+
+      // Ejemplo rápido de apuntes
+      function cargarEjemploApuntes() {
+        setApuntes(
+          "La mitocondria es un orgánulo celular eucariota encargado de suministrar la mayor parte de la energía necesaria para la actividad celular (respiración celular) mediante la síntesis de ATP (adenosín trifosfato). Posee una doble membrana: la membrana externa lisa y la membrana interna plegada en estructuras llamadas crestas mitocondriales, donde ocurre la cadena de transporte de electrones y la fosforilación oxidativa. En la matriz mitocondrial tiene lugar el ciclo de Krebs (ciclo del ácido cítrico) y la beta-oxidación de los ácidos grasos. Además, las mitocondrias poseen su propio ADN circular (ADN mitocondrial) y ribosomas propios, lo que respalda la teoría endosimbiótica propuesta por Lynn Margulis."
+        );
+        setMensajeEstado(null);
+      }
+
+      // Handlers de Quiz
+      function seleccionarOpcion(idxOpcion) {
+        if (!mostrarRespuesta && !cargando) {
+          setRespuestaSeleccionada(idxOpcion);
+          setAlertaQuiz("");
+        }
+      }
+
+      function manejarMostrarRespuesta() {
+        if (respuestaSeleccionada === null) {
+          setAlertaQuiz("⚠️ Selecciona una de las 4 opciones (1, 2, 3 o 4) antes de mostrar la respuesta.");
+          return;
+        }
+        setAlertaQuiz("");
+        setMostrarRespuesta(true);
+
+        const actual = preguntas[indice];
+        if (!preguntasEvaluadas[indice]) {
+          setPreguntasEvaluadas((prev) => ({ ...prev, [indice]: true }));
+          if (respuestaSeleccionada === actual.correcta) {
+            setAciertos((prev) => prev + 1);
+          }
+        }
+      }
+
+      function avanzarPregunta() {
+        const total = preguntas.length;
+        if (total === 0) return;
+
+        if (indice < total - 1) {
+          setIndice((prev) => prev + 1);
+        } else {
+          setIndice(0);
+          setAciertos(0);
+          setPreguntasEvaluadas({});
+        }
+        setRespuestaSeleccionada(null);
+        setMostrarRespuesta(false);
+        setAlertaQuiz("");
+      }
+
+      function registrarVoto(tipoVoto) {
+        setFeedbackVoto((prev) => ({
+          ...prev,
+          [indice]: tipoVoto
+        }));
+      }
+
+      // Handlers de Flashcards
+      function cambiarFlashcard(direccion) {
+        if (flashcards.length === 0) return;
+        setVolteada(false);
+        setIndiceFlashcard((prev) => {
+          if (direccion === "next") {
+            return prev < flashcards.length - 1 ? prev + 1 : 0;
+          } else {
+            return prev > 0 ? prev - 1 : flashcards.length - 1;
+          }
+        });
+      }
+
+      function marcarFlashcardConocida(estado) {
+        setConocidas((prev) => ({
+          ...prev,
+          [indiceFlashcard]: estado
+        }));
+      }
+
+      // Copiar Guía al portapapeles con fallback seguro
+      function copiarGuiaAlPortapapeles() {
+        if (!guiaTexto) return;
+        try {
+          const textarea = document.createElement("textarea");
+          textarea.value = guiaTexto;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textarea);
+          setCopiado(true);
+          setTimeout(() => setCopiado(false), 2000);
+        } catch (_) {
+          setCopiado(false);
+        }
+      }
+
+      // Datos derivados de Quiz
+      const totalPreguntas = preguntas.length;
+      const preguntaActual = totalPreguntas > 0 ? preguntas[indice] : null;
+      const porcentajeQuiz =
+        totalPreguntas > 0 ? Math.round(((indice + 1) / totalPreguntas) * 100) : 0;
+      const esCorrecta =
+        preguntaActual && respuestaSeleccionada === preguntaActual.correcta;
+      const votoActual = feedbackVoto[indice];
+
+      // Datos derivados de Flashcards
+      const totalFlashcards = flashcards.length;
+      const flashcardActual = totalFlashcards > 0 ? flashcards[indiceFlashcard] : null;
+      const totalDominadas = Object.values(conocidas).filter((v) => v === "dominada").length;
+
+      return (
+        <div className="min-h-screen flex flex-col md:flex-row bg-[#1a1a1a] text-white">
+          {/* =====================================================================
+              SIDEBAR DE NAVEGACIÓN Y CONFIGURACIÓN
+             ===================================================================== */}
+          <aside className="w-full md:w-72 lg:w-80 bg-[#16161c] border-b md:border-b-0 md:border-r border-[#2b2b36] p-5 flex flex-col justify-between shrink-0">
+            <div>
+              {/* Logo de Thea */}
+              <div className="flex items-center justify-between mb-6 px-1">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center font-bold text-lg shadow-md">
+                    T
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold tracking-tight text-white leading-none">
+                      Thea
+                    </h1>
+                    <span className="text-[11px] text-gray-400">
+                      Kit de Estudio con IA
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#2b2b36] text-blue-400 border border-[#3a3a48]">
+                  3.8 Flash
+                </span>
+              </div>
+
+              {/* Input rápido de API Key siempre accesible en el Sidebar */}
+              <div className="mb-6 bg-[#2b2b36] border border-[#3a3a48] rounded-xl p-3.5">
+                <label
+                  htmlFor="gemini-api-key"
+                  className="block text-[11px] font-semibold uppercase tracking-wider text-gray-300 mb-1.5"
+                >
+                  🔑 Gemini API Key
+                </label>
+                <div className="relative">
+                  <input
+                    id="gemini-api-key"
+                    type={mostrarKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-[#1a1a1a] text-white placeholder-gray-500 border border-[#3a3a48] rounded-lg px-3 py-2 pr-9 text-xs focus:outline-none focus:border-blue-500 transition"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMostrarKey(!mostrarKey)}
+                    title={mostrarKey ? "Ocultar API Key" : "Mostrar API Key"}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs px-1"
+                  >
+                    {mostrarKey ? "🙈" : "👁️"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Menú de Navegación Funcional (currentView) */}
+              <div className="space-y-1.5">
+                <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                  Herramientas de Estudio
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentView("materiales")}
+                  className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition ${
+                    currentView === "materiales"
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-950/40"
+                      : "text-gray-300 hover:bg-[#2b2b36] hover:text-white"
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <span>📄</span>
+                    <span>Materiales</span>
+                  </span>
+                  <span className="text-[11px] opacity-80">
+                    {apuntes.trim().length > 0 ? "Listo" : "Vacío"}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentView("quiz")}
+                  className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition ${
+                    currentView === "quiz"
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-950/40"
+                      : "text-gray-300 hover:bg-[#2b2b36] hover:text-white"
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <span>🧠</span>
+                    <span>Estudio Inteligente</span>
+                  </span>
+                  {totalPreguntas > 0 && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-black/30">
+                      {totalPreguntas}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentView("flashcards")}
+                  className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition ${
+                    currentView === "flashcards"
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-950/40"
+                      : "text-gray-300 hover:bg-[#2b2b36] hover:text-white"
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <span>🗂️</span>
+                    <span>Tarjetas de Estudio</span>
+                  </span>
+                  {totalFlashcards > 0 && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-black/30">
+                      {totalFlashcards}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentView("guia")}
+                  className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-medium transition ${
+                    currentView === "guia"
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-950/40"
+                      : "text-gray-300 hover:bg-[#2b2b36] hover:text-white"
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <span>📖</span>
+                    <span>Guía de Estudio</span>
+                  </span>
+                  {guiaTexto && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-black/30">
+                      ✓
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Indicador global de carga y alertas en Sidebar */}
+              {cargando && (
+                <div className="mt-5 p-3.5 rounded-xl bg-blue-950/40 border border-blue-500/50 text-blue-200 text-xs flex items-center gap-2.5">
+                  <svg className="animate-spin h-4 w-4 text-blue-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Generando con Gemini 3.8 Flash...</span>
+                </div>
+              )}
+
+              {mensajeEstado && !cargando && (
+                <div
+                  className={`mt-5 p-3.5 rounded-xl text-xs leading-relaxed border ${
+                    mensajeEstado.tipo === "error"
+                      ? "bg-red-950/40 border-red-500/60 text-red-300"
+                      : mensajeEstado.tipo === "warning"
+                      ? "bg-amber-950/40 border-amber-500/60 text-amber-300"
+                      : "bg-emerald-950/40 border-emerald-500/60 text-emerald-300"
+                  }`}
+                >
+                  {mensajeEstado.texto}
+                </div>
+              )}
+            </div>
+
+            {/* Resumen de progreso en la parte baja de la barra lateral */}
+            <div className="mt-6 pt-4 border-t border-[#2b2b36] text-xs text-gray-400 flex items-center justify-between">
+              <span>Aciertos del Quiz:</span>
+              <span className="font-semibold text-white">
+                {aciertos} / {totalPreguntas || 5}
+              </span>
+            </div>
+          </aside>
+
+          {/* =====================================================================
+              ÁREA CENTRAL DINÁMICA SEGÚN currentView
+             ===================================================================== */}
+          <main className="flex-1 p-6 md:p-10 lg:p-12 overflow-y-auto flex flex-col items-center">
+            <div className="w-full max-w-4xl">
+
+              {/* -----------------------------------------------------------------
+                  VISTA 1: MATERIALES (Input de Texto y Botones Generadores)
+                 ----------------------------------------------------------------- */}
+              {currentView === "materiales" && (
+                <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl p-6 md:p-8 shadow-xl">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                    <div>
+                      <h2 className="text-2xl font-bold text-white">
+                        Materiales de Estudio
+                      </h2>
+                      <p className="text-sm text-gray-400 mt-1">
+                        Pega tus apuntes, temarios o artículos y genera recursos interactivos con un clic.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={cargarEjemploApuntes}
+                      disabled={cargando}
+                      className="text-xs font-semibold px-3.5 py-2 rounded-lg bg-[#1a1a1a] hover:bg-[#23232d] text-blue-400 border border-[#3a3a48] transition disabled:opacity-50"
+                    >
+                      ✨ Cargar apuntes de ejemplo
+                    </button>
+                  </div>
+
+                  {/* Textarea de Apuntes */}
+                  <textarea
+                    id="study-notes"
+                    rows={10}
+                    value={apuntes}
+                    onChange={(e) => setApuntes(e.target.value)}
+                    disabled={cargando}
+                    placeholder="Pega aquí tus apuntes de clase, capítulos de libros o resúmenes para que Thea genere tu Quiz, Flashcards o Guía de Estudio..."
+                    className="w-full bg-[#1a1a1a] text-white placeholder-gray-500 border border-[#3a3a48] rounded-xl p-4 text-sm leading-relaxed resize-y focus:outline-none focus:border-blue-500 transition mb-6"
+                  />
+
+                  {/* Acciones de Generación para las 3 vistas */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                    <button
+                      type="button"
+                      onClick={generarQuiz}
+                      disabled={cargando}
+                      className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-blue-950/40"
+                    >
+                      <span>🧠</span>
+                      <span>{cargando ? "Generando..." : "Generar Estudio Inteligente"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={generarFlashcards}
+                      disabled={cargando}
+                      className="bg-[#4c1d95] hover:bg-[#5b21b6] border border-purple-500/40 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2"
+                    >
+                      <span>🗂️</span>
+                      <span>{cargando ? "Generando..." : "Generar Tarjetas (Flashcards)"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={generarGuia}
+                      disabled={cargando}
+                      className="bg-[#1f2937] hover:bg-[#374151] border border-gray-600/50 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-4 rounded-xl transition flex items-center justify-center gap-2"
+                    >
+                      <span>📖</span>
+                      <span>{cargando ? "Generando..." : "Generar Guía de Estudio"}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* -----------------------------------------------------------------
+                  VISTA 2: ESTUDIO INTELIGENTE (QUIZ FIEL A LA CAPTURA DE THEA)
+                 ----------------------------------------------------------------- */}
+              {currentView === "quiz" && (
+                <div>
+                  {totalPreguntas === 0 ? (
+                    <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl p-10 text-center">
+                      <div className="text-4xl mb-3">🧠</div>
+                      <h3 className="text-xl font-bold text-white mb-2">
+                        Aún no has generado un Quiz de Estudio Inteligente
+                      </h3>
+                      <p className="text-gray-400 text-sm max-w-md mx-auto mb-6">
+                        Asegúrate de haber pegado tus apuntes y tu API Key para crear 5 preguntas interactivas de opción múltiple.
+                      </p>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={generarQuiz}
+                          disabled={cargando}
+                          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-xl transition"
+                        >
+                          {cargando ? "Generando..." : "Generar Quiz Ahora"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentView("materiales")}
+                          className="bg-[#1a1a1a] hover:bg-[#23232d] border border-[#3a3a48] text-gray-300 font-medium px-5 py-3 rounded-xl transition"
+                        >
+                          Ir a Materiales
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {/* Barra Superior: Progreso Azul ("Nivel 1: XX%") + Iconos de Estrellas a la derecha */}
+                      <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl px-6 py-4 mb-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div className="w-full sm:flex-1 flex items-center gap-4">
+                          <span className="text-sm font-bold text-white whitespace-nowrap">
+                            Nivel 1: {porcentajeQuiz}%
+                          </span>
+                          <div className="w-full h-3 bg-[#1a1a1a] rounded-full overflow-hidden p-0.5 border border-[#3a3a48]">
+                            <div
+                              className="h-full bg-[#3b82f6] rounded-full transition-all duration-300"
+                              style={{ width: `${porcentajeQuiz}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Estrellas a la derecha */}
+                        <div className="flex items-center gap-1.5 shrink-0" title="Nivel de dominio">
+                          {[0, 1, 2].map((starIdx) => {
+                            const activa =
+                              (starIdx === 0 && aciertos >= 1) ||
+                              (starIdx === 1 && aciertos >= 3) ||
+                              (starIdx === 2 && aciertos >= 5);
+                            return (
+                              <svg
+                                key={starIdx}
+                                className={`w-6 h-6 transition-colors ${
+                                  activa ? "text-amber-400 fill-amber-400" : "text-gray-600 fill-gray-700"
+                                }`}
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"
+                                />
+                              </svg>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Pregunta Grande y Centrada */}
+                      <div className="my-10 px-4 text-center">
+                        <span className="inline-block text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">
+                          Pregunta {indice + 1} de {totalPreguntas}
+                        </span>
+                        <h2 className="text-2xl md:text-3xl font-semibold text-white leading-snug max-w-3xl mx-auto">
+                          {preguntaActual.pregunta}
+                        </h2>
+                      </div>
+
+                      {/* Grid 2x2 de Opciones con Círculo Numerado (1, 2, 3, 4) a la Izquierda */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        {preguntaActual.opciones.map((textoOpcion, i) => {
+                          let claseEstado = "";
+                          let claseCirculo = "bg-[#1a1a1a] text-gray-300 border-[#3a3a48]";
+
+                          if (respuestaSeleccionada === i) {
+                            claseEstado = "selected";
+                            claseCirculo = "bg-blue-600 text-white border-blue-400";
+                          }
+
+                          if (mostrarRespuesta) {
+                            if (i === preguntaActual.correcta) {
+                              claseEstado = "correct";
+                              claseCirculo = "bg-green-600 text-white border-green-400";
+                            } else if (respuestaSeleccionada === i) {
+                              claseEstado = "incorrect";
+                              claseCirculo = "bg-red-600 text-white border-red-400";
+                            }
+                          }
+
+                          return (
+                            <button
+                              key={`quiz-opt-${indice}-${i}`}
+                              type="button"
+                              disabled={cargando}
+                              onClick={() => seleccionarOpcion(i)}
+                              className={`option-card ${claseEstado} w-full min-h-[78px] p-5 flex items-center justify-start text-left gap-4`}
+                            >
+                              <div
+                                className={`w-9 h-9 rounded-full border flex items-center justify-center font-bold text-sm shrink-0 transition ${claseCirculo}`}
+                              >
+                                {i + 1}
+                              </div>
+                              <span className="text-base font-medium text-white leading-relaxed">
+                                {textoOpcion}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Alerta si intenta mostrar respuesta sin seleccionar */}
+                      {alertaQuiz && (
+                        <div className="mb-5 p-3.5 rounded-xl bg-amber-950/40 border border-amber-500/60 text-amber-300 text-sm text-center">
+                          {alertaQuiz}
+                        </div>
+                      )}
+
+                      {/* Panel de Explicación al Mostrar Respuesta */}
+                      {mostrarRespuesta && (
+                        <div
+                          className={`rounded-xl p-5 mb-6 border ${
+                            esCorrecta
+                              ? "bg-green-950/30 border-green-500/70 text-green-300"
+                              : "bg-red-950/30 border-red-500/70 text-red-300"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-base font-bold">
+                              {esCorrecta ? "🎉 ¡Respuesta Correcta!" : "❌ Respuesta Incorrecta"}
+                            </h4>
+                            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-black/30 text-white">
+                              Opción correcta: #{preguntaActual.correcta + 1}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-200 leading-relaxed">
+                            {preguntaActual.explicacion}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Barra de Botones Inferiores:
+                          Izquierda: "Mostrar respuesta" (morado oscuro)
+                          Centro: "Saltar" / "Siguiente" (azul claro centrado)
+                          Derecha: Pulgar arriba (verde) / Pulgar abajo (rojo) */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center pt-4 border-t border-[#2b2b36]">
+                        {/* Izquierda: Mostrar respuesta (morado oscuro) */}
+                        <div className="flex justify-center sm:justify-start">
+                          <button
+                            type="button"
+                            onClick={manejarMostrarRespuesta}
+                            disabled={cargando}
+                            className="w-full sm:w-auto min-w-[180px] bg-[#4c1d95] hover:bg-[#5b21b6] border border-purple-500/50 text-white font-semibold py-3 px-6 rounded-xl transition shadow-md"
+                          >
+                            Mostrar respuesta
+                          </button>
+                        </div>
+
+                        {/* Centro: Botón Saltar / Siguiente (azul claro centrado) */}
+                        <div className="flex justify-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={avanzarPregunta}
+                            disabled={cargando}
+                            className="w-full sm:w-auto min-w-[160px] bg-[#38bdf8] hover:bg-[#0ea5e9] text-[#0f172a] font-bold py-3 px-7 rounded-xl transition shadow-md text-center"
+                          >
+                            {mostrarRespuesta
+                              ? indice < totalPreguntas - 1
+                                ? "Siguiente ➔"
+                                : "Reiniciar ↻"
+                              : "Saltar"}
+                          </button>
+                        </div>
+
+                        {/* Derecha: Pulgar arriba (verde) / Pulgar abajo (rojo) */}
+                        <div className="flex justify-center sm:justify-end items-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => registrarVoto("up")}
+                            title="Me gusta esta pregunta"
+                            className={`w-12 h-12 rounded-xl border flex items-center justify-center text-lg transition ${
+                              votoActual === "up"
+                                ? "bg-emerald-600 border-emerald-400 text-white shadow-lg shadow-emerald-950/50"
+                                : "bg-emerald-950/40 hover:bg-emerald-800/50 border-emerald-500/50 text-emerald-400"
+                            }`}
+                          >
+                            👍
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => registrarVoto("down")}
+                            title="Mejorar esta pregunta"
+                            className={`w-12 h-12 rounded-xl border flex items-center justify-center text-lg transition ${
+                              votoActual === "down"
+                                ? "bg-red-600 border-red-400 text-white shadow-lg shadow-red-950/50"
+                                : "bg-red-950/40 hover:bg-red-800/50 border-red-500/50 text-red-400"
+                            }`}
+                          >
+                            👎
+                          </button>
+                        </div>
+                      </div>
+
+                      {votoActual && (
+                        <p className="text-xs text-gray-400 text-right mt-2">
+                          {votoActual === "up"
+                            ? "👍 ¡Gracias por calificar positivamente esta pregunta!"
+                            : "👎 Gracias, tomaremos en cuenta tu reporte."}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* -----------------------------------------------------------------
+                  VISTA 3: TARJETAS DE ESTUDIO (FLASHCARDS CON FLIP 3D)
+                 ----------------------------------------------------------------- */}
+              {currentView === "flashcards" && (
+                <div>
+                  {totalFlashcards === 0 ? (
+                    <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl p-10 text-center">
+                      <div className="text-4xl mb-3">🗂️</div>
+                      <h3 className="text-xl font-bold text-white mb-2">
+                        Aún no has generado Tarjetas de Estudio
+                      </h3>
+                      <p className="text-gray-400 text-sm max-w-md mx-auto mb-6">
+                        Genera 5 tarjetas interactivas con efecto de giro 3D (Concepto / Definición) a partir de tus apuntes.
+                      </p>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={generarFlashcards}
+                          disabled={cargando}
+                          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-xl transition"
+                        >
+                          {cargando ? "Generando..." : "Generar Flashcards Ahora"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentView("materiales")}
+                          className="bg-[#1a1a1a] hover:bg-[#23232d] border border-[#3a3a48] text-gray-300 font-medium px-5 py-3 rounded-xl transition"
+                        >
+                          Ir a Materiales
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {/* Encabezado de Flashcards */}
+                      <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl px-6 py-4 mb-6 flex items-center justify-between">
+                        <div>
+                          <span className="text-sm font-bold text-white">
+                            Tarjeta {indiceFlashcard + 1} de {totalFlashcards}
+                          </span>
+                          <span className="mx-2 text-gray-600">|</span>
+                          <span className="text-xs text-gray-400">
+                            Haz clic en la tarjeta para girarla
+                          </span>
+                        </div>
+                        <span className="text-xs font-semibold px-3 py-1 rounded-full bg-[#1a1a1a] border border-[#3a3a48] text-emerald-400">
+                          Dominadas: {totalDominadas} / {totalFlashcards}
+                        </span>
+                      </div>
+
+                      {/* Contenedor Flip 3D */}
+                      <div
+                        onClick={() => setVolteada(!volteada)}
+                        className="perspective-1000 w-full h-80 md:h-96 cursor-pointer select-none mb-6"
+                      >
+                        <div className={`flip-card-inner ${volteada ? "is-flipped" : ""}`}>
+                          {/* Cara Frontal: Concepto */}
+                          <div className="flip-card-front bg-[#2b2b36] border-2 border-[#3a3a48] hover:border-blue-500/60 p-8 flex flex-col items-center justify-center text-center shadow-2xl">
+                            <span className="text-xs font-bold uppercase tracking-widest text-blue-400 mb-3">
+                              Concepto
+                            </span>
+                            <h3 className="text-2xl md:text-3xl font-bold text-white max-w-xl leading-snug">
+                              {flashcardActual.concepto}
+                            </h3>
+                            <span className="mt-8 text-xs text-gray-400 bg-[#1a1a1a] px-3.5 py-1.5 rounded-full border border-[#3a3a48]">
+                              🔄 Clic para ver la definición
+                            </span>
+                          </div>
+
+                          {/* Cara Trasera: Definición */}
+                          <div className="flip-card-back bg-[#252532] border-2 border-blue-500/70 p-8 flex flex-col items-center justify-center text-center shadow-2xl">
+                            <span className="text-xs font-bold uppercase tracking-widest text-emerald-400 mb-3">
+                              Definición
+                            </span>
+                            <p className="text-lg md:text-xl text-gray-100 max-w-2xl leading-relaxed">
+                              {flashcardActual.definicion}
+                            </p>
+                            <span className="mt-8 text-xs text-gray-400 bg-[#1a1a1a] px-3.5 py-1.5 rounded-full border border-[#3a3a48]">
+                              🔄 Clic para volver al concepto
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Controles de navegación y dominio de Flashcards */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                        <div className="flex justify-center sm:justify-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => cambiarFlashcard("prev")}
+                            className="bg-[#2b2b36] hover:bg-[#343442] border border-[#3a3a48] text-white font-semibold py-3 px-5 rounded-xl transition"
+                          >
+                            ← Anterior
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => cambiarFlashcard("next")}
+                            className="bg-[#2b2b36] hover:bg-[#343442] border border-[#3a3a48] text-white font-semibold py-3 px-5 rounded-xl transition"
+                          >
+                            Siguiente →
+                          </button>
+                        </div>
+
+                        <div className="flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => setVolteada(!volteada)}
+                            className="bg-[#38bdf8] hover:bg-[#0ea5e9] text-[#0f172a] font-bold py-3 px-6 rounded-xl transition"
+                          >
+                            {volteada ? "Ver Concepto" : "Girar Tarjeta"}
+                          </button>
+                        </div>
+
+                        <div className="flex justify-center sm:justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => marcarFlashcardConocida("repasar")}
+                            className={`py-3 px-4 rounded-xl text-xs font-semibold border transition ${
+                              conocidas[indiceFlashcard] === "repasar"
+                                ? "bg-amber-600 border-amber-400 text-white"
+                                : "bg-[#2b2b36] hover:bg-[#343442] border-[#3a3a48] text-amber-300"
+                            }`}
+                          >
+                            📌 A repasar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => marcarFlashcardConocida("dominada")}
+                            className={`py-3 px-4 rounded-xl text-xs font-semibold border transition ${
+                              conocidas[indiceFlashcard] === "dominada"
+                                ? "bg-emerald-600 border-emerald-400 text-white"
+                                : "bg-[#2b2b36] hover:bg-[#343442] border-[#3a3a48] text-emerald-300"
+                            }`}
+                          >
+                            ✅ Dominada
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* -----------------------------------------------------------------
+                  VISTA 4: GUÍA DE ESTUDIO (RESUMEN ESTRUCTURADO)
+                 ----------------------------------------------------------------- */}
+              {currentView === "guia" && (
+                <div>
+                  {!guiaTexto ? (
+                    <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl p-10 text-center">
+                      <div className="text-4xl mb-3">📖</div>
+                      <h3 className="text-xl font-bold text-white mb-2">
+                        Aún no has generado una Guía de Estudio
+                      </h3>
+                      <p className="text-gray-400 text-sm max-w-md mx-auto mb-6">
+                        Sintetiza tus apuntes en un documento estructurado con los conceptos e ideas principales.
+                      </p>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={generarGuia}
+                          disabled={cargando}
+                          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-xl transition"
+                        >
+                          {cargando ? "Generando..." : "Generar Guía Ahora"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentView("materiales")}
+                          className="bg-[#1a1a1a] hover:bg-[#23232d] border border-[#3a3a48] text-gray-300 font-medium px-5 py-3 rounded-xl transition"
+                        >
+                          Ir a Materiales
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-[#2b2b36] border border-[#3a3a48] rounded-2xl p-6 md:p-8 shadow-xl">
+                      <div className="flex flex-wrap items-center justify-between gap-3 pb-5 mb-6 border-b border-[#3a3a48]">
+                        <div>
+                          <h2 className="text-2xl font-bold text-white">
+                            📖 Guía de Estudio Estructurada
+                          </h2>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Resumen de puntos clave generado con Gemini 3.8 Flash
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={copiarGuiaAlPortapapeles}
+                            className="bg-[#1a1a1a] hover:bg-[#23232d] border border-[#3a3a48] text-gray-200 text-xs font-semibold px-4 py-2.5 rounded-xl transition"
+                          >
+                            {copiado ? "✅ ¡Copiado!" : "📋 Copiar Guía"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={generarGuia}
+                            disabled={cargando}
+                            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition"
+                          >
+                            {cargando ? "Regenerando..." : "🔄 Regenerar"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Contenedor que respeta saltos de línea y estructura */}
+                      <div className="bg-[#1a1a1a] border border-[#3a3a48] rounded-xl p-6 text-gray-100 text-sm md:text-base leading-relaxed whitespace-pre-wrap">
+                        {guiaTexto}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>

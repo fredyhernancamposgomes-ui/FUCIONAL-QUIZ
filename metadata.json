@@ -1,0 +1,6 @@
+{
+  "name": "Thea - Plataforma de Estudio Inteligente",
+  "description": "Transforma tus apuntes en quizes interactivos, tarjetas de estudio 3D y guías estructuradas impulsadas por Gemini con IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
